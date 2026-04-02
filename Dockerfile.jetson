@@ -1,0 +1,68 @@
+# TurboQuant — Jetson AGX Thor
+# Base: NVIDIA Triton Server with vLLM backend (includes PyTorch 2.11, Triton 3.6, CUDA)
+FROM nvcr.io/nvidia/tritonserver:26.03-vllm-python-py3
+
+LABEL description="TurboQuant KV-cache quantization — NVIDIA Jetson AGX Thor (SM 11.0 Blackwell)"
+LABEL turboquant.version="0.2.0"
+LABEL turboquant.gpu="nvidia-thor"
+
+# ── Install build dependencies ─────────────────────────────────────────────
+RUN apt-get update -qq && apt-get install -y --no-install-recommends \
+        python3-dev \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Install Python dependencies ───────────────────────────────────────────
+# scipy is needed for Lloyd-Max codebook computation
+RUN pip install --no-cache-dir scipy
+
+# ── Copy the TurboQuant source ────────────────────────────────────────────
+WORKDIR /workspace
+COPY turboquant/ /workspace/turboquant/
+
+# ── Install TurboQuant in editable mode ──────────────────────────────────
+RUN pip install --no-cache-dir -e /workspace/turboquant/
+
+# ── Copy v8 implementation ────────────────────────────────────────────────
+COPY versions/__init__.py /workspace/versions/__init__.py
+COPY versions/v8_vllm_native/ /workspace/versions/v8_vllm_native/
+
+# ── Copy demo and benchmark scripts ───────────────────────────────────────
+COPY demo_jetson.py /workspace/demo_jetson.py
+COPY demo_vllm.py /workspace/demo_vllm.py
+COPY demo_v8.py /workspace/demo_v8.py
+
+# ── Pre-warm Triton kernel cache for SM 11.0 (Blackwell) ─────────────────
+# This compile step avoids the first-run JIT latency during actual inference.
+# We run a minimal smoke-test that touches all three Triton kernels.
+RUN python3 <<'PYEOF' 2>&1 | grep -v WARNING | grep -v CUDA || true
+import torch, math
+from turboquant.quantizer import TurboQuantProd
+from turboquant.kv_cache import quantize_values, unpack_values, ValueQuantized
+from turboquant.triton_kernels import turboquant_fused_decode
+
+DEVICE = 'cuda'
+BH, N, D = 4, 64, 128
+
+prod_q = TurboQuantProd(dim=D, bits=3, device=DEVICE)
+k = torch.randn(BH, N, D, device=DEVICE)
+v = torch.randn(BH, N, D, device=DEVICE)
+q = torch.randn(BH, D, device=DEVICE)
+
+qk = prod_q.quantize(k.float())
+vq = quantize_values(v.float(), bits=2, group_size=32)
+vq2 = ValueQuantized(data=unpack_values(vq), scales=vq.scales, zeros=vq.zeros, bits=2)
+
+out = turboquant_fused_decode(
+    query=q, quantized_key=qk, value_quantized=vq2,
+    Pi=prod_q.mse_quantizer.Pi, S=prod_q.S,
+    centroids=prod_q.mse_quantizer.centroids,
+    mse_bits=2, qjl_scale=prod_q.qjl_scale,
+    sm_scale=1.0/math.sqrt(D), group_size=32,
+)
+torch.cuda.synchronize()
+print('[TurboQuant] Triton kernel pre-warm complete — SM', torch.cuda.get_device_properties(0).major, '.', torch.cuda.get_device_properties(0).minor)
+PYEOF
+
+# ── Default command ───────────────────────────────────────────────────────
+CMD ["python3", "/workspace/demo_jetson.py"]
