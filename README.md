@@ -6,7 +6,7 @@ Implementation of TurboQuant KV cache compression (ICLR 2026, arXiv:2504.19874) 
 
 ## Acknowledgements
 
-The `turboquant/` library at the core of this project is the work of **[@0xSero](https://github.com/0xSero)** (Sherif Cherfa). The original source is at [github.com/0xSero/turboquant](https://github.com/0xSero/turboquant). His implementation covers the paper's core algorithms (TurboQuantMSE, TurboQuantProd, Lloyd-Max codebooks, QJL projection, vLLM integration, and Triton decode kernels), validated across RTX 3090 and RTX 5090 hardware. None of the Jetson work here would have been possible without that foundation — thank you.
+The `turboquant/` library at the core of this project is the work of **[@0xSero](https://github.com/0xSero)**. The original source is at [github.com/0xSero/turboquant](https://github.com/0xSero/turboquant). Their implementation covers the paper's core algorithms (TurboQuantMSE, TurboQuantProd, Lloyd-Max codebooks, QJL projection, vLLM integration, and Triton decode kernels), validated across RTX 3090 and RTX 5090 hardware. None of the Jetson work here would have been possible without that foundation — thank you.
 
 ---
 
